@@ -38,6 +38,16 @@ func CanonicalizeHeaderKey(k string) string {
 type Headers struct {
 	// This representation allows us to make zero-value valid
 	items map[string]string
+
+	// Represents raw headers that are not canonicalized nor mutated by the transport mapper. rawItems differs from
+	// original items in implementation, where originalItems is kept in sync with the canonicalized items and various
+	// transports will swap them interchangably and rawItems is an explicit set of headers with a specific contract
+	// around mutation.
+	rawItems map[string]string
+
+	// keep a merged map of items and rawItems, with items taking precedence on key collisions.
+	allItems map[string]string
+
 	// original non-canonical headers, foo-bar will be treated as different value than Foo-bar
 	originalItems map[string]string
 }
@@ -55,7 +65,10 @@ func NewHeadersWithCapacity(capacity int) Headers {
 	}
 	return Headers{
 		items:         make(map[string]string, capacity),
+		rawItems:      make(map[string]string, capacity),
 		originalItems: make(map[string]string, capacity),
+		// stores at most len(items) + len(newitems) iff there are no collisions
+		allItems: make(map[string]string, capacity*2),
 	}
 }
 
@@ -67,12 +80,42 @@ func NewHeadersWithCapacity(capacity int) Headers {
 //
 // 	headers = headers.With("foo", "bar").With("baz", "qux")
 func (h Headers) With(k, v string) Headers {
+	if h.allItems == nil {
+		h.allItems = make(map[string]string)
+	}
 	if h.items == nil {
 		h.items = make(map[string]string)
 		h.originalItems = make(map[string]string)
 	}
-	h.items[CanonicalizeHeaderKey(k)] = v
+	key := CanonicalizeHeaderKey(k)
+	h.items[key] = v
 	h.originalItems[k] = v
+	h.allItems[key] = v
+	return h
+}
+
+// WithRaw returns a Headers object with the given key-value pair added to it,
+// with the guarantee that the underlying transports will not modify the key or value.
+//
+// The returned object MAY not point to the same Headers underlying data store
+// as the original Headers so the returned Headers MUST always be used instead
+// of the original object.
+//
+// 	headers = headers.WithRaw("foo", "bar").WithRaw("baz", "qux")
+func (h Headers) WithRaw(k, v string) Headers {
+	if h.rawItems == nil {
+		h.rawItems = make(map[string]string)
+	}
+
+	h.rawItems[k] = v
+
+	// set value in all items iff this key is not already set to keep canonicalized precedence invariant
+	if _, ok := h.items[CanonicalizeHeaderKey(k)]; !ok {
+		if h.allItems == nil {
+			h.allItems = make(map[string]string)
+		}
+		h.allItems[k] = v
+	}
 	return h
 }
 
@@ -80,17 +123,39 @@ func (h Headers) With(k, v string) Headers {
 //
 // This is a no-op if the key does not exist.
 func (h Headers) Del(k string) {
-	delete(h.items, CanonicalizeHeaderKey(k))
+	key := CanonicalizeHeaderKey(k)
+	delete(h.items, key)
 	delete(h.originalItems, k)
+	delete(h.rawItems, k)
+	// clean up both the canonicalized and raw keys in the allItems map
+	delete(h.allItems, k)
+	delete(h.allItems, key)
 }
 
-// Get retrieves the value associated with the given header name.
+// Get retrieves the value associated with the given header name. For non-raw headers,
+// the key will be converted to a canonicalized form. For raw headers, the key must be an
+// exact match.
+//
+// If both a canonicalized and raw header exist with the same key, the canonicalized
+// value is returned.
+//
+//  headers = headers.With("Foo", "bar").WithRaw("foo", "baz")
+//  headers.Get("foo") => "bar"
+//
+//  headers = headers.With("foo", "bar").WithRaw("FOO", "baz")
+//  headers.Get("FOO") => "baz"
 func (h Headers) Get(k string) (string, bool) {
 	v, ok := h.items[CanonicalizeHeaderKey(k)]
+	if !ok {
+		// If canonicalized key is not found fall back to rawItems. This precedence keeps
+		// existing behavior consistent and will avoid breaking older middleware when
+		// using WithRaw in newer middleware.
+		v, ok = h.rawItems[k]
+	}
 	return v, ok
 }
 
-// Len returns the number of headers defined on this object.
+// Len returns the number of canonicalized headers defined on this object.
 func (h Headers) Len() int {
 	return len(h.items)
 }
@@ -101,6 +166,18 @@ func (h Headers) Len() int {
 // Keys in the map are normalized using CanonicalizeHeaderKey.
 func (h Headers) Items() map[string]string {
 	return h.items
+}
+
+// RawItems returns the underlying map of raw headers for this Headers object. The returned map
+// MUST NOT be changed. Doing so will result in undefined behavior.
+func (h Headers) RawItems() map[string]string {
+	return h.rawItems
+}
+
+// AllItems returns the underlying map of ALL headers for this Headers object. The returned map
+// MUST NOT be changed. Doing so will result in undefined behavior.
+func (h Headers) AllItems() map[string]string {
+	return h.allItems
 }
 
 // OriginalItems returns the non-canonicalized version of the underlying map

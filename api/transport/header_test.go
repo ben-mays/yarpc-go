@@ -28,12 +28,14 @@ import (
 
 func TestNewHeaders(t *testing.T) {
 	tests := []struct {
-		headers  map[string]string
-		matches  map[string]string
-		failures []string
+		headers    map[string]string
+		rawHeaders map[string]string
+		matches    map[string]string
+		failures   []string
 	}{
 		{
 			nil,
+			map[string]string{},
 			map[string]string{},
 			[]string{"foo"},
 		},
@@ -42,6 +44,7 @@ func TestNewHeaders(t *testing.T) {
 				"Foo": "Bar",
 				"Baz": "qux",
 			},
+			map[string]string{},
 			map[string]string{
 				"foo": "Bar",
 				"Foo": "Bar",
@@ -57,6 +60,7 @@ func TestNewHeaders(t *testing.T) {
 				"foo": "bar",
 				"baz": "",
 			},
+			map[string]string{},
 			map[string]string{
 				"foo": "bar",
 				"baz": "",
@@ -64,10 +68,45 @@ func TestNewHeaders(t *testing.T) {
 			},
 			[]string{"qux"},
 		},
+		{
+			// if a canonicalized header has the same key as a raw header,
+			// ensure that the canonicalized header value is returned.
+			headers: map[string]string{
+				"RawFoo":   "bar",
+				"RAWERFOO": "bar",
+			},
+			rawHeaders: map[string]string{
+				"rawfoo":   "rawbar",
+				"RAWERFOO": "rawbar",
+			},
+			matches: map[string]string{
+				"RawFoo":   "bar",
+				"rawfoo":   "bar",
+				"RAWERFOO": "bar",
+			},
+			failures: []string{""},
+		},
+		{
+			// assert that Get() will pull raw headers with case-sensitive keys
+			headers: map[string]string{},
+			rawHeaders: map[string]string{
+				"rawbaz": "rawbaz",
+				"RAWBAZ": "RAWBAZ",
+			},
+			matches: map[string]string{
+				"rawbaz": "rawbaz",
+				"RAWBAZ": "RAWBAZ",
+			},
+			failures: []string{"RawBaz"},
+		},
 	}
 
 	for _, tt := range tests {
 		headers := HeadersFromMap(tt.headers)
+		for k, v := range tt.rawHeaders {
+			headers = headers.WithRaw(k, v)
+		}
+
 		for k, v := range tt.matches {
 			vg, ok := headers.Get(k)
 			assert.True(t, ok, "expected true for %q", k)
@@ -89,8 +128,11 @@ func TestItemsAndOriginalItems(t *testing.T) {
 		msg                       string
 		toDeleteKey               string
 		headers                   []headers
+		rawHeaders                []headers
 		preDeletionItems          map[string]string
 		postDeletionItems         map[string]string
+		preDeletionRawItems       map[string]string
+		postDeletionRawItems      map[string]string
 		preDeletionOriginalItems  map[string]string
 		postDeletionOriginalItems map[string]string
 	}{
@@ -102,12 +144,23 @@ func TestItemsAndOriginalItems(t *testing.T) {
 				{"Foo-bAr-baZ", "FOO-BAR-BAZ"},
 				{"other-header", "other-value"},
 			},
+			rawHeaders: []headers{
+				{"raw-foo", "raw-bar"},
+				{"other-header", "should-delete"},
+			},
 			preDeletionItems: map[string]string{
 				"foo-bar-baz":  "FOO-BAR-BAZ",
 				"other-header": "other-value",
 			},
 			postDeletionItems: map[string]string{
 				"foo-bar-baz": "FOO-BAR-BAZ",
+			},
+			preDeletionRawItems: map[string]string{
+				"raw-foo":      "raw-bar",
+				"other-header": "should-delete",
+			},
+			postDeletionRawItems: map[string]string{
+				"raw-foo": "raw-bar",
 			},
 			preDeletionOriginalItems: map[string]string{
 				"foo-BAR-BaZ":  "foo-bar-baz",
@@ -153,12 +206,21 @@ func TestItemsAndOriginalItems(t *testing.T) {
 				{"Foo-bAr-baZ", "FOO-BAR-BAZ"},
 				{"other-header", "other-value"},
 			},
+			rawHeaders: []headers{
+				{"raw-foo", "raw-bar"},
+			},
 			preDeletionItems: map[string]string{
 				"foo-bar-baz":  "FOO-BAR-BAZ",
 				"other-header": "other-value",
 			},
 			postDeletionItems: map[string]string{
 				"other-header": "other-value",
+			},
+			preDeletionRawItems: map[string]string{
+				"raw-foo": "raw-bar",
+			},
+			postDeletionRawItems: map[string]string{
+				"raw-foo": "raw-bar",
 			},
 			preDeletionOriginalItems: map[string]string{
 				"foo-BAR-BaZ":  "foo-bar-baz",

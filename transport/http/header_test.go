@@ -36,18 +36,19 @@ func TestHTTPHeaders(t *testing.T) {
 		http          http.Header
 	}{
 		{
-			ApplicationHeaderPrefix,
-			transport.HeadersFromMap(map[string]string{
+			prefix: ApplicationHeaderPrefix,
+			toTransport: transport.HeadersFromMap(map[string]string{
 				"foo":     "bar",
 				"foo-bar": "hello",
-			}),
-			transport.HeadersFromMap(map[string]string{
+			}).WithRaw("Authorization", "token xyz"),
+			fromTransport: transport.HeadersFromMap(map[string]string{
 				"Foo":     "bar",
 				"Foo-Bar": "hello",
-			}),
-			http.Header{
+			}).WithRaw("Authorization", "token xyz"),
+			http: http.Header{
 				"Rpc-Header-Foo":     []string{"bar"},
 				"Rpc-Header-Foo-Bar": []string{"hello"},
+				"Authorization":      []string{"token xyz"},
 			},
 		},
 	}

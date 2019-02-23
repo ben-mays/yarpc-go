@@ -47,6 +47,9 @@ func (hm headerMapper) ToHTTPHeaders(from transport.Headers, to http.Header) htt
 	for k, v := range from.Items() {
 		to.Add(hm.Prefix+k, v)
 	}
+	for k, v := range from.RawItems() {
+		to.Add(k, v)
+	}
 	return to
 }
 
@@ -62,6 +65,9 @@ func (hm headerMapper) FromHTTPHeaders(from http.Header, to transport.Headers) t
 		if strings.HasPrefix(k, hm.Prefix) {
 			key := k[prefixLen:]
 			to = to.With(key, from.Get(k))
+		} else {
+			// if header doesn't contain prefix, set as a RawHeader
+			to = to.WithRaw(k, from.Get(k))
 		}
 		// Note: undefined behavior for multiple occurrences of the same header
 	}
